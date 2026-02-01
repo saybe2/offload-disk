@@ -2,7 +2,7 @@ FROM ghcr.io/zastinian/esdock:nodejs_22
 
 USER root
 RUN apt-get update \
-  && apt-get install -y samba smbclient samba-common-bin fuse3 libfuse3-dev \
+  && apt-get install -y samba smbclient samba-common-bin fuse3 libfuse3-dev libfuse2 \
      gosu sudo python3 make g++ pkg-config \
   && rm -rf /var/lib/apt/lists/*
 

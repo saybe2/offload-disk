@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import Fuse from "fuse-native";
+import { createRequire } from "module";
 import { config } from "../config.js";
 import { Archive } from "../models/Archive.js";
 import { Folder } from "../models/Folder.js";
@@ -13,17 +13,6 @@ import { log } from "../logger.js";
 const READ_DIR = "smb_read";
 const WRITE_DIR = "smb_write";
 const UNLIMITED_BYTES = Math.floor(159.2 * 1024 * 1024 * 1024 * 1024);
-const ERR = {
-  ENOENT: (Fuse as any).ENOENT ?? -2,
-  EIO: (Fuse as any).EIO ?? -5,
-  EPERM: (Fuse as any).EPERM ?? -1,
-  EACCES: (Fuse as any).EACCES ?? -13,
-  EEXIST: (Fuse as any).EEXIST ?? -17,
-  ENOTEMPTY: (Fuse as any).ENOTEMPTY ?? -39,
-  EXDEV: (Fuse as any).EXDEV ?? -18,
-  EAGAIN: (Fuse as any).EAGAIN ?? -11,
-  ENOSPC: (Fuse as any).ENOSPC ?? -28
-};
 
 type FileItem = {
   archive: any;
@@ -298,6 +287,27 @@ async function handleStatfs(username: string) {
 
 export function startFuse() {
   if (!config.smbEnabled) return;
+
+  const require = createRequire(import.meta.url);
+  let Fuse: any;
+  try {
+    Fuse = require("fuse-native");
+  } catch (err) {
+    log("smb", `fuse-native unavailable: ${err instanceof Error ? err.message : err}`);
+    return;
+  }
+
+  const ERR = {
+    ENOENT: (Fuse as any).ENOENT ?? -2,
+    EIO: (Fuse as any).EIO ?? -5,
+    EPERM: (Fuse as any).EPERM ?? -1,
+    EACCES: (Fuse as any).EACCES ?? -13,
+    EEXIST: (Fuse as any).EEXIST ?? -17,
+    ENOTEMPTY: (Fuse as any).ENOTEMPTY ?? -39,
+    EXDEV: (Fuse as any).EXDEV ?? -18,
+    EAGAIN: (Fuse as any).EAGAIN ?? -11,
+    ENOSPC: (Fuse as any).ENOSPC ?? -28
+  };
 
   const mountPath = config.smbMount;
   const ops: any = {
