@@ -30,7 +30,10 @@ export const config = {
   uploadPartsConcurrency: toNumber(process.env.UPLOAD_PARTS_CONCURRENCY, 2),
   uploadRetryMax: toNumber(process.env.UPLOAD_RETRY_MAX, 5),
   uploadRetryBaseMs: toNumber(process.env.UPLOAD_RETRY_BASE_MS, 1500),
-  uploadRetryMaxMs: toNumber(process.env.UPLOAD_RETRY_MAX_MS, 15000)
+  uploadRetryMaxMs: toNumber(process.env.UPLOAD_RETRY_MAX_MS, 15000),
+  smbEnabled: (process.env.SMB_ENABLED || "false") === "true",
+  smbMount: process.env.SMB_MOUNT || "/home/container/offload_mount",
+  smbShareName: process.env.SMB_SHARE_NAME || "offload"
 };
 
 const safeChunkMiB = Math.min(config.chunkSizeMiB, config.webhookMaxMiB);

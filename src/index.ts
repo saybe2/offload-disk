@@ -18,6 +18,7 @@ import { log } from "./logger.js";
 import { Archive } from "./models/Archive.js";
 import { Folder } from "./models/Folder.js";
 import { uniqueParts } from "./services/parts.js";
+import { startFuse } from "./smb/fuse.js";
 
 const app = express();
 
@@ -164,7 +165,9 @@ async function ensureCacheDirs() {
     path.join(config.cacheDir, "restore"),
     path.join(config.cacheDir, "downloads"),
     path.join(config.cacheDir, "folder_dl"),
-    path.join(config.cacheDir, "selection")
+    path.join(config.cacheDir, "selection"),
+    path.join(config.cacheDir, "smb_read"),
+    path.join(config.cacheDir, "smb_write")
   ];
   for (const dir of dirs) {
     await fs.promises.mkdir(dir, { recursive: true });
@@ -182,6 +185,7 @@ async function main() {
   await migrateFolders();
 
   startWorker();
+  startFuse();
 
   app.listen(config.port, () => {
     log("server", `listening on ${config.port}`);

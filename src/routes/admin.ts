@@ -3,6 +3,8 @@ import bcrypt from "bcryptjs";
 import { requireAdmin } from "../auth.js";
 import { User } from "../models/User.js";
 import { Webhook } from "../models/Webhook.js";
+import { ensureSmbUser } from "../services/smbUsers.js";
+import { config } from "../config.js";
 
 export const adminRouter = Router();
 
@@ -21,6 +23,9 @@ adminRouter.post("/users", requireAdmin, async (req, res) => {
   if (!username || !password) {
     return res.status(400).json({ error: "missing_fields" });
   }
+  if (config.smbEnabled && !/^[a-zA-Z0-9._-]{1,32}$/.test(username)) {
+    return res.status(400).json({ error: "invalid_username" });
+  }
   const hash = await bcrypt.hash(password, 10);
   const user = await User.create({
     username,
@@ -29,6 +34,7 @@ adminRouter.post("/users", requireAdmin, async (req, res) => {
     quotaBytes: quotaBytes ?? 0,
     usedBytes: 0
   });
+  await ensureSmbUser(username, password);
   res.json({ id: user.id });
 });
 
@@ -38,7 +44,10 @@ adminRouter.patch("/users/:id", requireAdmin, async (req, res) => {
   if (typeof quotaBytes === "number") update.quotaBytes = quotaBytes;
   if (role) update.role = role;
   if (password) update.passwordHash = await bcrypt.hash(password, 10);
-  await User.findByIdAndUpdate(req.params.id, update);
+  const user = await User.findByIdAndUpdate(req.params.id, update, { new: true });
+  if (password && user) {
+    await ensureSmbUser(user.username, password);
+  }
   res.json({ ok: true });
 });
 

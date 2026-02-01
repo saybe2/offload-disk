@@ -10,6 +10,7 @@ export HOME="/home/container"
 
 mkdir -p /home/container/data/samba /home/container/logs /home/container/offload_mount /home/container/runtime /home/container/.npm
 chown -R "${APP_UID}:${APP_GID}" /home/container
+chmod +x /home/container/tools/smb_user.sh || true
 
 CONF_PATH="/home/container/runtime/smb.conf"
 cat > "$CONF_PATH" <<EOF
@@ -38,7 +39,7 @@ cat > "$CONF_PATH" <<EOF
   pid directory = /home/container/data/samba
 
 [${SMB_SHARE_NAME}]
-  path = /home/container/offload_mount
+  path = /home/container/offload_mount/%U
   browseable = yes
   read only = no
   guest ok = no
