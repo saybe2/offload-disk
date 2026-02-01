@@ -3,8 +3,13 @@ set -euo pipefail
 
 SMB_PORT="${SMB_PORT:-445}"
 SMB_SHARE_NAME="${SMB_SHARE_NAME:-offload}"
+APP_UID="${APP_UID:-101}"
+APP_GID="${APP_GID:-103}"
 
-mkdir -p /home/container/data/samba /home/container/logs /home/container/offload_mount /home/container/runtime
+export HOME="/home/container"
+
+mkdir -p /home/container/data/samba /home/container/logs /home/container/offload_mount /home/container/runtime /home/container/.npm
+chown -R "${APP_UID}:${APP_GID}" /home/container
 
 CONF_PATH="/home/container/runtime/smb.conf"
 cat > "$CONF_PATH" <<EOF
@@ -51,7 +56,7 @@ fi
 # TODO: start FUSE layer here once implemented.
 
 if command -v gosu >/dev/null 2>&1; then
-  exec gosu 101:103 bash -lc "npm install && npm run dev"
+  exec gosu "${APP_UID}:${APP_GID}" bash -lc "npm_config_cache=/home/container/.npm npm install && npm run dev"
 else
-  exec bash -lc "npm install && npm run dev"
+  exec bash -lc "npm_config_cache=/home/container/.npm npm install && npm run dev"
 fi
