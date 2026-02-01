@@ -1,0 +1,72 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Admin</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header>
+    <h1>Admin Panel</h1>
+    <div class="header-actions">
+      <a href="/">Back</a>
+    </div>
+  </header>
+
+  <section class="card">
+    <h2>Create User</h2>
+    <form id="createUserForm">
+      <label>Username</label>
+      <input type="text" name="username" required />
+      <label>Password</label>
+      <input type="password" name="password" required />
+      <label>Role</label>
+      <select name="role">
+        <option value="user">user</option>
+        <option value="admin">admin</option>
+      </select>
+      <label>Quota (GB, 0 = unlimited)</label>
+      <input type="number" name="quotaGb" value="0" min="0" />
+      <button type="submit">Create</button>
+      <div id="createUserStatus" class="status"></div>
+    </form>
+  </section>
+
+  <section class="card">
+    <h2>Users</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Username</th>
+          <th>Role</th>
+          <th>Used (GB)</th>
+          <th>Quota (GB)</th>
+          <th>Set Quota</th>
+        </tr>
+      </thead>
+      <tbody id="userList"></tbody>
+    </table>
+  </section>
+
+  <section class="card">
+    <h2>Webhooks</h2>
+    <form id="addWebhookForm">
+      <label>Webhook URL</label>
+      <input type="text" name="url" required />
+      <button type="submit">Add</button>
+    </form>
+    <table>
+      <thead>
+        <tr>
+          <th>URL</th>
+          <th>Enabled</th>
+          <th>Action</th>
+        </tr>
+      </thead>
+      <tbody id="webhookList"></tbody>
+    </table>
+  </section>
+
+  <script src="/admin.js"></script>
+</body>
+</html>

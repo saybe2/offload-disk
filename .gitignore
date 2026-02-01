@@ -1,0 +1,10 @@
+node_modules/
+dist/
+data/
+logs/
+.env
+.env.*
+*.log
+
+tools/test_webhook_*.ps1
+demo.png

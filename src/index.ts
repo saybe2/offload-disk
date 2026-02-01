@@ -1,0 +1,194 @@
+import express from "express";
+import session from "express-session";
+import MongoStore from "connect-mongo";
+import bcrypt from "bcryptjs";
+import path from "path";
+import fs from "fs";
+import { connectDb } from "./db.js";
+import { config } from "./config.js";
+import { authRouter } from "./routes/auth.js";
+import { apiRouter } from "./routes/api.js";
+import { adminRouter } from "./routes/admin.js";
+import { publicRouter } from "./routes/public.js";
+import { startWorker } from "./services/worker.js";
+import { User } from "./models/User.js";
+import { Setting } from "./models/Setting.js";
+import { Webhook } from "./models/Webhook.js";
+import { log } from "./logger.js";
+import { Archive } from "./models/Archive.js";
+import { Folder } from "./models/Folder.js";
+import { uniqueParts } from "./services/parts.js";
+
+const app = express();
+
+app.use(express.json({ limit: "50mb" }));
+app.use(express.urlencoded({ extended: true }));
+
+app.use(
+  session({
+    secret: config.sessionSecret,
+    resave: false,
+    saveUninitialized: false,
+    store: MongoStore.create({ mongoUrl: config.mongoUri, dbName: config.mongoDb })
+  })
+);
+
+const publicDir = path.resolve("public");
+app.use(express.static(publicDir));
+
+app.get("/", (req, res) => {
+  if (req.session.userId) {
+    return res.sendFile(path.join(publicDir, "app.html"));
+  }
+  return res.sendFile(path.join(publicDir, "login.html"));
+});
+
+app.get("/admin", (req, res) => {
+  if (req.session.role !== "admin") {
+    return res.status(403).send("forbidden");
+  }
+  return res.sendFile(path.join(publicDir, "admin.html"));
+});
+
+app.get("/share/:token", (_req, res) => {
+  return res.sendFile(path.join(publicDir, "share.html"));
+});
+
+app.use("/api/auth", authRouter);
+app.use("/api", apiRouter);
+app.use("/api/admin", adminRouter);
+app.use(publicRouter);
+
+async function ensureAdminUser() {
+  const existing = await User.findOne({ username: config.adminUsername });
+  if (existing) return;
+  const hash = await bcrypt.hash(config.adminPassword, 10);
+  await User.create({
+    username: config.adminUsername,
+    passwordHash: hash,
+    role: "admin",
+    quotaBytes: 0,
+    usedBytes: 0
+  });
+}
+
+async function ensureMasterKey() {
+  const key = await Setting.findOne({ key: "master_key" });
+  if (!key) {
+    await Setting.create({ key: "master_key", value: config.masterKey });
+  }
+}
+
+async function ensureWebhookSeed() {
+  const count = await Webhook.countDocuments();
+  const seedUrl = process.env.DISCORD_WEBHOOK_URL;
+  if (count === 0 && seedUrl) {
+    await Webhook.create({ url: seedUrl, enabled: true });
+  }
+}
+
+async function migrateArchives() {
+  const cursor = Archive.find({
+    $or: [
+      { displayName: { $exists: false } },
+      { downloadName: { $exists: false } },
+      { "files.originalName": { $exists: false } },
+      { priority: { $exists: false } },
+      { priorityOverride: { $exists: false } },
+      { retryCount: { $exists: false } }
+    ]
+  }).lean();
+
+  for await (const doc of cursor) {
+    const files = (doc.files || []).map((f: any) => ({
+      ...f,
+      originalName: f.originalName || f.name || path.basename(f.path || "file")
+    }));
+
+    const firstName = files[0]?.originalName || doc.name || `file_${doc._id}`;
+    const displayName = doc.displayName || (doc.isBundle ? `Bundle (${files.length || 1} files)` : firstName);
+    const downloadName = doc.downloadName || (doc.isBundle ? `bundle_${Date.now()}.zip` : firstName);
+    const parts = uniqueParts(doc.parts);
+    const partsChanged = (doc.parts?.length || 0) !== parts.length;
+
+    await Archive.updateOne(
+      { _id: doc._id },
+      {
+        $set: {
+          displayName,
+          downloadName,
+          files,
+          priority: typeof doc.priority === "number" ? doc.priority : 2,
+          priorityOverride: doc.priorityOverride ?? false,
+          retryCount: doc.retryCount ?? 0,
+          deleteTotalParts: doc.deleteTotalParts ?? 0,
+          deletedParts: doc.deletedParts ?? 0,
+          ...(partsChanged ? { parts } : {})
+        }
+      }
+    );
+  }
+}
+
+async function migrateParts() {
+  const cursor = Archive.find({ "parts.0": { $exists: true } }).lean();
+  for await (const doc of cursor) {
+    const parts = uniqueParts(doc.parts);
+    if ((doc.parts?.length || 0) !== parts.length) {
+      await Archive.updateOne({ _id: doc._id }, { $set: { parts } });
+    }
+  }
+}
+
+async function migrateFolders() {
+  try {
+    await Folder.collection.dropIndex("userId_1_name_1");
+  } catch (err: any) {
+    if (err?.codeName !== "IndexNotFound") {
+      log("server", `folder index cleanup failed: ${err?.message || err}`);
+    }
+  }
+
+  await Folder.updateMany(
+    { parentId: { $exists: false } },
+    { $set: { parentId: null } }
+  );
+}
+
+async function ensureCacheDirs() {
+  const dirs = [
+    config.cacheDir,
+    path.join(config.cacheDir, "uploads_tmp"),
+    path.join(config.cacheDir, "uploads"),
+    path.join(config.cacheDir, "work"),
+    path.join(config.cacheDir, "restore"),
+    path.join(config.cacheDir, "downloads"),
+    path.join(config.cacheDir, "folder_dl"),
+    path.join(config.cacheDir, "selection")
+  ];
+  for (const dir of dirs) {
+    await fs.promises.mkdir(dir, { recursive: true });
+  }
+}
+
+async function main() {
+  await connectDb();
+  await ensureCacheDirs();
+  await ensureAdminUser();
+  await ensureMasterKey();
+  await ensureWebhookSeed();
+  await migrateArchives();
+  await migrateParts();
+  await migrateFolders();
+
+  startWorker();
+
+  app.listen(config.port, () => {
+    log("server", `listening on ${config.port}`);
+  });
+}
+
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

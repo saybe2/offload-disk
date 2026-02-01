@@ -1,0 +1,153 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Cloud Storage</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header>
+    <h1>Cloud Storage</h1>
+    <div class="header-actions">
+      <a id="adminLink" href="/admin">Admin</a>
+      <button id="logoutBtn">Logout</button>
+    </div>
+  </header>
+
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="sidebar-section">
+        <button id="navFiles" class="nav-item">Files</button>
+        <button id="navShared" class="nav-item">Shared</button>
+        <button id="navTrash" class="nav-item">Trash</button>
+      </div>
+      <div class="sidebar-footer">
+        <div id="quota" class="quota"></div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <section class="card" id="uploadArea">
+        <h2>Upload</h2>
+        <form id="uploadForm">
+          <label>Select files</label>
+          <input type="file" name="files" multiple />
+          <button type="submit">Upload</button>
+          <progress id="serverProgress" max="100" value="0"></progress>
+          <div id="uploadStatus" class="status"></div>
+        </form>
+        <div class="drop-hint">Drag & drop files here</div>
+      </section>
+
+      <section class="card">
+        <div class="toolbar">
+          <h2 id="listTitle">Files</h2>
+          <div class="toolbar-item">
+            <button id="newFolderBtn">New Folder</button>
+            <button id="downloadSelectedBtn" disabled>Download Selected</button>
+          </div>
+          <div id="folderPriorityWrap" class="toolbar-item">
+            <label>Folder priority</label>
+            <select id="folderPrioritySelect">
+              <option value="0">lowest</option>
+              <option value="1">low</option>
+              <option value="2">normal</option>
+              <option value="3">high</option>
+              <option value="4">maximum</option>
+            </select>
+            <button id="folderPrioritySave">Save</button>
+          </div>
+          <div class="toolbar-item">
+            <label for="searchInput">Search</label>
+            <input id="searchInput" type="search" placeholder="Search files..." />
+          </div>
+        </div>
+        <table>
+          <thead id="listHead"></thead>
+          <tbody id="archiveList"></tbody>
+        </table>
+      </section>
+    </main>
+  </div>
+
+  <div id="contextMenu" class="context-menu hidden"></div>
+
+  <div id="deleteModal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>Delete file?</h3>
+      </div>
+      <div class="modal-body">
+        <div>Files and folders are stored in the trash for 30 days before they are permanently deleted.</div>
+        <label class="checkbox-row">
+          <input type="checkbox" id="deleteSkipConfirm" />
+          <span>Don't ask again</span>
+        </label>
+        <div class="modal-actions">
+          <button id="deleteCancelBtn">Cancel</button>
+          <button id="deleteConfirmBtn">Delete</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="shareModal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 id="shareModalTitle">Share</h3>
+        <button id="shareCloseBtn">Close</button>
+      </div>
+      <div class="modal-body">
+        <label>Expires</label>
+        <select id="shareExpirySelect">
+          <option value="never">Never</option>
+          <option value="1d">1 day</option>
+          <option value="1w">1 week</option>
+          <option value="1m">1 month</option>
+          <option value="custom">Choose date & time</option>
+        </select>
+        <input id="shareExpiryCustom" type="datetime-local" class="hidden" />
+        <div class="modal-actions">
+          <button id="shareCreateBtn">Create link</button>
+          <button id="shareCopyBtn" class="hidden">Copy link</button>
+        </div>
+        <div id="shareResult" class="status"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="priorityModal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 id="priorityTitle">Priority</h3>
+        <button id="priorityCloseBtn">Close</button>
+      </div>
+      <div class="modal-body">
+        <label>Priority</label>
+        <select id="prioritySelect">
+          <option value="0">lowest</option>
+          <option value="1">low</option>
+          <option value="2">normal</option>
+          <option value="3">high</option>
+          <option value="4">maximum</option>
+        </select>
+        <div class="modal-actions">
+          <button id="prioritySaveBtn">Save</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="infoModal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 id="infoTitle">Info</h3>
+        <button id="infoClose">Close</button>
+      </div>
+      <div id="infoBody" class="modal-body"></div>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
