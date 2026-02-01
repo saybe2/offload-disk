@@ -19,23 +19,45 @@ async function loadUsers() {
       <td>${quotaGb}</td>
       <td>
         <input type="number" min="0" value="${u.quotaBytes > 0 ? (u.quotaBytes / (1024 * 1024 * 1024)).toFixed(2) : 0}" data-user="${u._id}" />
-        <button data-user="${u._id}">Set</button>
+        <button data-action="quota" data-user="${u._id}">Set</button>
+      </td>
+      <td>
+        <input type="password" placeholder="New password" data-user="${u._id}" data-type="password" />
+        <button data-action="password" data-user="${u._id}">Update</button>
       </td>
     `;
     userList.appendChild(tr);
   }
 
-  userList.querySelectorAll('button').forEach((btn) => {
+  userList.querySelectorAll('button[data-action]').forEach((btn) => {
     btn.addEventListener('click', async () => {
       const id = btn.getAttribute('data-user');
-      const input = userList.querySelector(`input[data-user="${id}"]`);
-      const quotaGb = Number(input.value);
-      await fetch(`/api/admin/users/${id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ quotaBytes: Math.floor(quotaGb * 1024 * 1024 * 1024) })
-      });
-      await loadUsers();
+      const action = btn.getAttribute('data-action');
+      if (action === 'quota') {
+        const input = userList.querySelector(`input[data-user="${id}"]:not([data-type])`);
+        const quotaGb = Number(input.value);
+        await fetch(`/api/admin/users/${id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ quotaBytes: Math.floor(quotaGb * 1024 * 1024 * 1024) })
+        });
+        await loadUsers();
+        return;
+      }
+      if (action === 'password') {
+        const input = userList.querySelector(`input[data-user="${id}"][data-type="password"]`);
+        const password = input.value;
+        if (!password) {
+          alert('Enter a new password');
+          return;
+        }
+        await fetch(`/api/admin/users/${id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password })
+        });
+        input.value = '';
+      }
     });
   });
 }
