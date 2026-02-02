@@ -603,7 +603,12 @@ export function startFuse() {
     chown: (_path: string, _uid: number, _gid: number, cb: (err?: number | null) => void) => cb(0)
   };
 
-  const fuse = new (Fuse as any)(mountPath, ops, { force: true, debug: false, allowOther: true });
+  const fuse = new (Fuse as any)(mountPath, ops, {
+    force: true,
+    debug: false,
+    allowOther: true,
+    options: ["nonempty"]
+  });
   fuse.mount((err: Error) => {
     if (err) {
       log("smb", `fuse mount failed: ${err.message}`);

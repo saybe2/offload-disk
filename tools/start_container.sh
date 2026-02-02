@@ -19,6 +19,16 @@ chmod 755 /home/container/data/samba /home/container/logs /home/container/runtim
 touch /home/container/logs/samba.log
 chmod +x /home/container/tools/smb_user.sh || true
 
+# Keep mountpoint empty for FUSE; move any leftovers aside.
+shopt -s dotglob nullglob
+entries=(/home/container/offload_mount/*)
+if [[ ${#entries[@]} -gt 0 ]]; then
+  orphan_dir="/home/container/data/smb_orphans/$(date +%Y%m%d_%H%M%S)"
+  mkdir -p "$orphan_dir"
+  mv "${entries[@]}" "$orphan_dir"/ 2>/dev/null || true
+fi
+shopt -u dotglob nullglob
+
 CONF_PATH="/home/container/runtime/smb.conf"
 cat > "$CONF_PATH" <<EOF
 [global]
@@ -77,9 +87,6 @@ start_smb() {
         if ! id "$smb_user" >/dev/null 2>&1; then
           useradd -M -s /usr/sbin/nologin "$smb_user" >/dev/null 2>&1 || true
         fi
-        mkdir -p "/home/container/offload_mount/$smb_user" >/dev/null 2>&1 || true
-        chown "$smb_user":"$smb_user" "/home/container/offload_mount/$smb_user" >/dev/null 2>&1 || true
-        chmod 750 "/home/container/offload_mount/$smb_user" >/dev/null 2>&1 || true
       done < <(pdbedit -L -s "$CONF_PATH" 2>/dev/null | awk -F: '{print $1}')
     fi
     /usr/sbin/smbd -F --no-process-group -s "$CONF_PATH" &
