@@ -5,6 +5,7 @@ SMB_PORT="${SMB_PORT:-445}"
 SMB_SHARE_NAME="${SMB_SHARE_NAME:-offload}"
 APP_UID="${APP_UID:-101}"
 APP_GID="${APP_GID:-103}"
+export SMB_CONF_PATH="/home/container/runtime/smb.conf"
 
 export HOME="/home/container"
 
