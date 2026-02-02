@@ -310,6 +310,8 @@ export function startFuse() {
   };
 
   const mountPath = config.smbMount;
+  const readyFile = "/home/container/runtime/fuse_ready";
+  const failedFile = "/home/container/runtime/fuse_failed";
   const ops: any = {
     readdir: async (filePath: string, cb: (err: number | null, files?: string[]) => void) => {
       try {
@@ -605,9 +607,15 @@ export function startFuse() {
   fuse.mount((err: Error) => {
     if (err) {
       log("smb", `fuse mount failed: ${err.message}`);
+      try {
+        fs.writeFileSync(failedFile, err.message);
+      } catch {}
       return;
     }
     log("smb", `fuse mounted at ${mountPath}`);
+    try {
+      fs.writeFileSync(readyFile, new Date().toISOString());
+    } catch {}
   });
 
   const shutdown = () => {
@@ -617,6 +625,9 @@ export function startFuse() {
       } else {
         log("smb", "fuse unmounted");
       }
+      try {
+        fs.unlinkSync(readyFile);
+      } catch {}
       process.exit(0);
     });
   };
