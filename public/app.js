@@ -296,7 +296,7 @@ function renderHead() {
     <tr>
       <th>Name</th>
       <th>Status</th>
-      <th>Discord Upload</th>
+      <th>Processed</th>
       <th>Priority</th>
       <th>Date</th>
       <th>Size</th>
@@ -881,7 +881,7 @@ async function openFileContextMenu(item, x, y) {
   items.push({ label: 'Info', onClick: async () => {
     showInfoModal(`File: ${fileName}`, [
       { label: 'Status', value: a.status },
-      { label: 'Discord upload', value: a.status === 'ready' ? '100%' : discordProgress(a) },
+      { label: 'Processed', value: a.status === 'ready' ? '100%' : discordProgress(a) },
       { label: 'Size', value: formatSize(item.file?.size ?? a.originalSize) },
       { label: 'Created', value: formatDate(a.createdAt) },
       { label: 'Priority', value: priorityLabel(a.priority ?? 2) },
