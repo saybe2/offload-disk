@@ -831,6 +831,17 @@ async function openFolderContextMenu(folder, x, y) {
         { label: 'Files', value: String(info.totalFiles) }
       ]);
     } },
+    { label: 'Delete folder', onClick: async () => {
+      const ok = await confirmDelete();
+      if (!ok) return;
+      await fetch(`/api/folders/${folder._id}`, { method: 'DELETE' });
+      if (currentFolderId === folder._id) {
+        currentFolderId = folder.parentId ? folder.parentId.toString() : null;
+      }
+      selectedItems.clear();
+      loadFolders();
+      loadArchives();
+    } },
     { label: 'Download folder', onClick: async () => { location.href = `/api/folders/${folder._id}/download`; } },
     { label: 'Share', onClick: async () => openShareModal({ type: 'folder', id: folder._id, name: folder.name }) },
     { label: 'Copy name', onClick: async () => copyText(folder.name) },

@@ -830,6 +830,43 @@ apiRouter.patch("/folders/:id", requireAuth, async (req, res) => {
   return res.json({ ok: true });
 });
 
+apiRouter.delete("/folders/:id", requireAuth, async (req, res) => {
+  const folder = await Folder.findById(req.params.id).lean();
+  if (!folder) return res.status(404).json({ error: "not_found" });
+  if (req.session.role !== "admin" && folder.userId.toString() !== req.session.userId) {
+    return res.status(403).json({ error: "forbidden" });
+  }
+
+  const descendantIds = await getDescendantFolderIds(folder.userId.toString(), folder._id.toString());
+  const archives = await Archive.find({
+    userId: folder.userId,
+    folderId: { $in: descendantIds },
+    trashedAt: null,
+    deletedAt: null
+  }).lean();
+  const now = new Date();
+  await Promise.all(
+    archives.map((archive) => (
+      Archive.updateOne(
+        { _id: archive._id },
+        { $set: { trashedAt: now, deleteTotalParts: uniqueParts(archive.parts).length, deletedParts: 0 } }
+      )
+    ))
+  );
+
+  const archiveIds = archives.map((a) => a._id);
+  await Share.deleteMany({
+    userId: folder.userId,
+    $or: [
+      { folderId: { $in: descendantIds } },
+      ...(archiveIds.length > 0 ? [{ archiveId: { $in: archiveIds } }] : [])
+    ]
+  });
+  await Folder.deleteMany({ _id: { $in: descendantIds } });
+  log("api", `folder delete ${folder._id} archives=${archives.length}`);
+  return res.json({ ok: true });
+});
+
 apiRouter.get("/folders/:id/info", requireAuth, async (req, res) => {
   const folder = await Folder.findById(req.params.id).lean();
   if (!folder) return res.status(404).json({ error: "not_found" });
