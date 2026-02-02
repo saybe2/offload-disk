@@ -25,6 +25,9 @@ async function loadUsers() {
         <input type="password" placeholder="New password" data-user="${u._id}" data-type="password" />
         <button data-action="password" data-user="${u._id}">Update</button>
       </td>
+      <td>
+        <button data-action="delete" data-user="${u._id}">Delete</button>
+      </td>
     `;
     userList.appendChild(tr);
   }
@@ -57,6 +60,18 @@ async function loadUsers() {
           body: JSON.stringify({ password })
         });
         input.value = '';
+        return;
+      }
+      if (action === 'delete') {
+        const ok = confirm('Delete user and queue their files for deletion?');
+        if (!ok) return;
+        const res = await fetch(`/api/admin/users/${id}`, { method: 'DELETE' });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          alert(data.error || 'Delete failed');
+          return;
+        }
+        await loadUsers();
       }
     });
   });

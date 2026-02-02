@@ -2,8 +2,11 @@ import { Router } from "express";
 import bcrypt from "bcryptjs";
 import { requireAdmin } from "../auth.js";
 import { User } from "../models/User.js";
+import { Archive } from "../models/Archive.js";
+import { Folder } from "../models/Folder.js";
+import { Share } from "../models/Share.js";
 import { Webhook } from "../models/Webhook.js";
-import { ensureSmbUser } from "../services/smbUsers.js";
+import { deleteSmbUser, ensureSmbUser } from "../services/smbUsers.js";
 import { config } from "../config.js";
 
 export const adminRouter = Router();
@@ -48,6 +51,31 @@ adminRouter.patch("/users/:id", requireAdmin, async (req, res) => {
   if (password && user) {
     await ensureSmbUser(user.username, password);
   }
+  res.json({ ok: true });
+});
+
+adminRouter.delete("/users/:id", requireAdmin, async (req, res) => {
+  const user = await User.findById(req.params.id);
+  if (!user) return res.status(404).json({ error: "not_found" });
+  if (req.session.userId && user.id.toString() === req.session.userId.toString()) {
+    return res.status(400).json({ error: "cannot_delete_self" });
+  }
+  if (user.role === "admin") {
+    const adminCount = await User.countDocuments({ role: "admin" });
+    if (adminCount <= 1) {
+      return res.status(400).json({ error: "last_admin" });
+    }
+  }
+
+  const now = new Date();
+  await Archive.updateMany(
+    { userId: user._id, deletedAt: null },
+    { $set: { deleteRequestedAt: now, deletedParts: 0, deleting: false } }
+  );
+  await Share.deleteMany({ userId: user._id });
+  await Folder.deleteMany({ userId: user._id });
+  await User.deleteOne({ _id: user._id });
+  await deleteSmbUser(user.username);
   res.json({ ok: true });
 });
 
