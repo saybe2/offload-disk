@@ -720,7 +720,7 @@ async function uploadFiles(fileList) {
 
   xhr.onload = async () => {
     if (xhr.status >= 200 && xhr.status < 300) {
-      uploadStatus.textContent = 'Queued for Discord upload';
+      uploadStatus.textContent = 'Queued for processing';
       serverProgress.value = 100;
       uploadEta.textContent = '';
       uploadForm.reset();
