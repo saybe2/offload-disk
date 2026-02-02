@@ -9,6 +9,7 @@ APP_GID="${APP_GID:-103}"
 export HOME="/home/container"
 
 mkdir -p /home/container/data/samba /home/container/logs /home/container/offload_mount /home/container/runtime /home/container/.npm
+chmod 777 /home/container/offload_mount
 chown -R "${APP_UID}:${APP_GID}" /home/container
 chown -R root:root /home/container/data/samba /home/container/logs /home/container/runtime
 chmod 755 /home/container/data/samba /home/container/logs /home/container/runtime
