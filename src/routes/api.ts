@@ -252,8 +252,36 @@ apiRouter.post("/upload-stream", requireAuth, async (req, res) => {
   let receiveDone: Promise<{ originalSize: number }> | null = null;
   let uploadDone: Promise<void> | null = null;
   let receiveError: Error | null = null;
+  let clientAborted = false;
+  let activeFile: NodeJS.ReadableStream | null = null;
+  let activeRawWrite: fs.WriteStream | null = null;
 
   const bb = busboy({ headers: req.headers, limits: { files: 1 } });
+
+  const abortStream = (reason: string) => {
+    if (clientAborted) return;
+    clientAborted = true;
+    receiveError = new Error(reason);
+    try {
+      const destroyFn = (activeFile as any)?.destroy;
+      if (typeof destroyFn === "function") {
+        destroyFn.call(activeFile, new Error(reason));
+      }
+    } catch {}
+    try {
+      activeRawWrite?.destroy();
+    } catch {}
+  };
+
+  req.on("aborted", () => {
+    abortStream("client_aborted");
+    log("stream", "upload aborted by client");
+  });
+
+  bb.on("error", (err: Error) => {
+    receiveError = err;
+    log("stream", `busboy error ${err.message}`);
+  });
 
   bb.on("field", (name: string, value: string) => {
     if (name === "folderId") {
@@ -265,9 +293,13 @@ apiRouter.post("/upload-stream", requireAuth, async (req, res) => {
     const filename = (info?.filename || "file").toString();
     const safeName = filename.replace(/[\\/]/g, "_");
 
+    activeFile = file;
     file.pause();
 
     receiveDone = (async () => {
+      if (clientAborted) {
+        throw new Error("client_aborted");
+      }
       let folderRef: any = null;
       let basePriority = 2;
       if (folderId) {
@@ -289,6 +321,7 @@ apiRouter.post("/upload-stream", requireAuth, async (req, res) => {
 
       const rawPath = path.join(stagingDir, `0_${sanitizeName(filename)}`);
       const rawWrite = fs.createWriteStream(rawPath);
+      activeRawWrite = rawWrite;
 
       const archive = await Archive.create({
         userId: user.id,
@@ -391,6 +424,9 @@ apiRouter.post("/upload-stream", requireAuth, async (req, res) => {
       file.on("data", (chunk: Buffer) => {
         originalSize += chunk.length;
       });
+      file.on("error", (err) => {
+        failed = err instanceof Error ? err : new Error("stream_failed");
+      });
 
       file.pipe(rawWrite);
       file.pipe(cipher);
@@ -466,6 +502,12 @@ apiRouter.post("/upload-stream", requireAuth, async (req, res) => {
     }
 
     const result = await receiveDone;
+    if (clientAborted || req.aborted) {
+      if (archiveId) {
+        await Archive.updateOne({ _id: archiveId }, { $set: { status: "error", error: receiveError?.message || "client_aborted" } });
+      }
+      return;
+    }
     if (receiveError) {
       if (archiveId) {
         await Archive.updateOne({ _id: archiveId }, { $set: { status: "error", error: receiveError.message } });

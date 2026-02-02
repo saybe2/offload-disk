@@ -683,11 +683,11 @@ async function uploadFiles(fileList) {
   let lastSpeed = 0;
 
   const data = new FormData();
-  for (const file of fileList) {
-    data.append('files', file);
-  }
   if (currentFolderId) {
     data.append('folderId', currentFolderId);
+  }
+  for (const file of fileList) {
+    data.append('files', file);
   }
 
   const streamSingle = fileList.length === 1 && fileList[0].size >= (8 * 1024 * 1024);
