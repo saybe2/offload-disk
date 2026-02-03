@@ -215,6 +215,16 @@ apiRouter.post("/upload", requireAuth, upload.any(), async (req, res) => {
     log("api", "upload aborted by client");
   });
 
+  req.on("close", () => {
+    if (!aborted) {
+      log("api", `upload stream closed bytes=${req.socket?.bytesRead || 0}`);
+    }
+  });
+
+  req.on("end", () => {
+    log("api", "upload request fully received");
+  });
+
   const files = (req.files as Express.Multer.File[]) || [];
   tempPaths = files.map((f) => f.path);
   if (files.length === 0) {
