@@ -51,6 +51,7 @@ const priorityCloseBtn = document.getElementById('priorityCloseBtn');
 let currentFolderId = null;
 let currentView = 'files'; // files | trash | shared
 let dragArchiveId = null;
+let dragFolderId = null;
 let foldersById = {};
 let foldersCache = [];
 let archivesCache = [];
@@ -427,7 +428,7 @@ function renderArchives() {
       });
       trUp.addEventListener('dragover', (e) => {
         e.stopPropagation();
-        if (dragArchiveId) {
+        if (dragFolderId || dragArchiveId) {
           e.preventDefault();
           trUp.classList.add('drop');
           return;
@@ -448,6 +449,17 @@ function renderArchives() {
         e.preventDefault();
         e.stopPropagation();
         trUp.classList.remove('drop');
+        if (dragFolderId) {
+          await fetch(`/api/folders/${dragFolderId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ parentId })
+          });
+          dragFolderId = null;
+          loadFolders();
+          loadArchives();
+          return;
+        }
         if (dragArchiveId) {
           await fetch(`/api/archives/${dragArchiveId}/move`, {
             method: 'PATCH',
@@ -473,6 +485,9 @@ function renderArchives() {
     for (const folder of folders) {
       const tr = document.createElement('tr');
       tr.className = 'folder-row-item';
+      tr.draggable = true;
+      tr.addEventListener('dragstart', () => { dragFolderId = folder._id; });
+      tr.addEventListener('dragend', () => { dragFolderId = null; });
       tr.addEventListener('click', () => {
         currentFolderId = folder._id;
         selectedItems.clear();
@@ -487,7 +502,7 @@ function renderArchives() {
 
       tr.addEventListener('dragover', (e) => {
         e.stopPropagation();
-        if (dragArchiveId) {
+        if (dragFolderId || dragArchiveId) {
           e.preventDefault();
           tr.classList.add('drop');
           return;
@@ -508,6 +523,21 @@ function renderArchives() {
         e.preventDefault();
         e.stopPropagation();
         tr.classList.remove('drop');
+        if (dragFolderId) {
+          if (dragFolderId === folder._id) {
+            dragFolderId = null;
+            return;
+          }
+          await fetch(`/api/folders/${dragFolderId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ parentId: folder._id })
+          });
+          dragFolderId = null;
+          loadFolders();
+          loadArchives();
+          return;
+        }
         if (dragArchiveId) {
           await fetch(`/api/archives/${dragArchiveId}/move`, {
             method: 'PATCH',
@@ -1228,7 +1258,7 @@ function isFileDrag(e) {
 }
 
 document.addEventListener('dragover', (e) => {
-  if (dragArchiveId) return;
+  if (dragArchiveId || dragFolderId) return;
   if (!isFileDrag(e)) return;
   e.preventDefault();
   if (!e.target.closest('.folder-row-item')) {
@@ -1238,7 +1268,7 @@ document.addEventListener('dragover', (e) => {
 });
 
 document.addEventListener('dragleave', (e) => {
-  if (dragArchiveId) return;
+  if (dragArchiveId || dragFolderId) return;
   if (!isFileDrag(e)) return;
   uploadArea.classList.remove('drop');
   if (!e.target.closest('.folder-row-item')) {
@@ -1247,7 +1277,7 @@ document.addEventListener('dragleave', (e) => {
 });
 
 document.addEventListener('drop', async (e) => {
-  if (dragArchiveId) return;
+  if (dragArchiveId || dragFolderId) return;
   if (!isFileDrag(e)) return;
   e.preventDefault();
   uploadArea.classList.remove('drop');

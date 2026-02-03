@@ -981,7 +981,7 @@ apiRouter.post("/folders", requireAuth, async (req, res) => {
 });
 
 apiRouter.patch("/folders/:id", requireAuth, async (req, res) => {
-  const { priority, name } = req.body as { priority?: number; name?: string };
+  const { priority, name, parentId } = req.body as { priority?: number; name?: string; parentId?: string | null };
   const folder = await Folder.findById(req.params.id);
   if (!folder) return res.status(404).json({ error: "not_found" });
   if (req.session.role !== "admin" && folder.userId.toString() !== req.session.userId) {
@@ -997,6 +997,25 @@ apiRouter.patch("/folders/:id", requireAuth, async (req, res) => {
       { $set: { priority } }
     );
     log("api", `folder priority ${folder.id}=${priority}`);
+  }
+  if (parentId !== undefined) {
+    const nextParentId = parentId ? parentId.toString() : null;
+    if (nextParentId && nextParentId === folder._id.toString()) {
+      return res.status(400).json({ error: "invalid_parent" });
+    }
+    if (nextParentId) {
+      const parent = await Folder.findById(nextParentId);
+      if (!parent || (req.session.role !== "admin" && parent.userId.toString() !== req.session.userId)) {
+        return res.status(400).json({ error: "invalid_parent" });
+      }
+      const descendants = await getDescendantFolderIds(folder.userId.toString(), folder._id.toString());
+      if (descendants.includes(nextParentId)) {
+        return res.status(400).json({ error: "invalid_parent" });
+      }
+      folder.parentId = parent._id;
+    } else {
+      folder.parentId = null;
+    }
   }
   try {
     await folder.save();
