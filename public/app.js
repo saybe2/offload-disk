@@ -50,6 +50,7 @@ const priorityCloseBtn = document.getElementById('priorityCloseBtn');
 
 let currentFolderId = null;
 let currentView = 'files'; // files | trash | shared
+const STREAM_UPLOADS_ENABLED = false;
 let dragArchiveId = null;
 let dragFolderId = null;
 let foldersById = {};
@@ -800,7 +801,7 @@ async function uploadFiles(fileList, targetFolderId) {
     }
   }
 
-  const streamSingle = fileList.length === 1 && fileList[0].size >= (8 * 1024 * 1024);
+  const streamSingle = STREAM_UPLOADS_ENABLED && fileList.length === 1 && fileList[0].size >= (8 * 1024 * 1024);
   let uploadUrl = streamSingle ? '/api/upload-stream' : '/api/upload';
   if (streamSingle) {
     const params = new URLSearchParams();
