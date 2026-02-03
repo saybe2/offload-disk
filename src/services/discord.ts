@@ -71,3 +71,13 @@ export async function deleteWebhookMessage(webhookUrl: string, messageId: string
     throw new Error(`webhook_delete_failed:${res.status}:${text}`);
   }
 }
+
+export async function fetchWebhookMessage(webhookUrl: string, messageId: string) {
+  const url = `${webhookUrl}/messages/${messageId}`;
+  const res = await fetch(url);
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`webhook_message_failed:${res.status}:${text}`);
+  }
+  return res.json() as Promise<{ attachments?: { url: string }[] }>;
+}

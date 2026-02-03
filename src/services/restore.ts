@@ -6,7 +6,9 @@ import type { Response } from "express";
 import mime from "mime-types";
 import unzipper from "unzipper";
 import { ArchiveDoc } from "../models/Archive.js";
-import { downloadToFile } from "./discord.js";
+import { Archive } from "../models/Archive.js";
+import { Webhook } from "../models/Webhook.js";
+import { downloadToFile, fetchWebhookMessage } from "./discord.js";
 import { deriveKey } from "./crypto.js";
 import { zipEntryName } from "./archive.js";
 import { startRestore, endRestore } from "./activity.js";
@@ -43,6 +45,43 @@ async function pipeFileToWritable(filePath: string, target: fs.WriteStream) {
   });
 }
 
+async function downloadPartWithRepair(
+  archiveId: string,
+  part: { index: number; url: string; messageId: string; webhookId: string },
+  partPath: string,
+  webhookCache: Map<string, string>
+) {
+  try {
+    await downloadToFile(part.url, partPath);
+    return;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (!/download_failed:404/.test(message)) {
+      throw err;
+    }
+    let webhookUrl = webhookCache.get(part.webhookId);
+    if (!webhookUrl) {
+      const hook = await Webhook.findById(part.webhookId).lean();
+      webhookUrl = hook?.url || "";
+      webhookCache.set(part.webhookId, webhookUrl);
+    }
+    if (!webhookUrl) {
+      throw err;
+    }
+    const payload = await fetchWebhookMessage(webhookUrl, part.messageId);
+    const freshUrl = payload.attachments?.[0]?.url;
+    if (!freshUrl) {
+      throw err;
+    }
+    await Archive.updateOne(
+      { _id: archiveId, "parts.messageId": part.messageId },
+      { $set: { "parts.$.url": freshUrl } }
+    );
+    part.url = freshUrl;
+    await downloadToFile(part.url, partPath);
+  }
+}
+
 export async function restoreArchiveToFile(
   archive: ArchiveDoc,
   outputPath: string,
@@ -77,10 +116,11 @@ async function restoreArchiveToFileInternal(
   encryptedStream.pipe(decipher).pipe(output);
 
   try {
+    const webhookCache = new Map<string, string>();
     const parts = uniqueParts(archive.parts);
     for (const part of parts) {
       const partPath = path.join(workDir, `part_${part.index}`);
-      await downloadToFile(part.url, partPath);
+      await downloadPartWithRepair(archive.id, part, partPath, webhookCache);
 
       const actualHash = await hashFile(partPath);
       if (actualHash !== part.hash) {
@@ -162,10 +202,11 @@ export async function restoreArchiveFileToFile(
   encryptedStream.pipe(decipher).pipe(parser);
 
   try {
+    const webhookCache = new Map<string, string>();
     const parts = uniqueParts(archive.parts);
     for (const part of parts) {
       const partPath = path.join(workDir, `part_${part.index}`);
-      await downloadToFile(part.url, partPath);
+      await downloadPartWithRepair(archive.id, part, partPath, webhookCache);
 
       const actualHash = await hashFile(partPath);
       if (actualHash !== part.hash) {
@@ -272,11 +313,12 @@ export async function streamArchiveFileToResponse(
   });
 
   try {
+    const webhookCache = new Map<string, string>();
     const parts = uniqueParts(archive.parts);
     for (const part of parts) {
       if (aborted) break;
       const partPath = path.join(workDir, `part_${part.index}`);
-      await downloadToFile(part.url, partPath);
+      await downloadPartWithRepair(archive.id, part, partPath, webhookCache);
 
       const actualHash = await hashFile(partPath);
       if (actualHash !== part.hash) {
@@ -343,11 +385,12 @@ export async function streamArchiveToResponse(
   });
 
   try {
+    const webhookCache = new Map<string, string>();
     const parts = uniqueParts(archive.parts);
     for (const part of parts) {
       if (aborted) break;
       const partPath = path.join(workDir, `part_${part.index}`);
-      await downloadToFile(part.url, partPath);
+      await downloadPartWithRepair(archive.id, part, partPath, webhookCache);
 
       const actualHash = await hashFile(partPath);
       if (actualHash !== part.hash) {
