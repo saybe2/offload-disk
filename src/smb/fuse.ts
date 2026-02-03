@@ -310,8 +310,8 @@ export function startFuse() {
   };
 
   const mountPath = config.smbMount;
-  const readyFile = "/home/container/runtime/fuse_ready";
-  const failedFile = "/home/container/runtime/fuse_failed";
+  const readyFile = "/home/container/data/fuse_ready";
+  const failedFile = "/home/container/data/fuse_failed";
   const ops: any = {
     readdir: async (filePath: string, cb: (err: number | null, files?: string[]) => void) => {
       try {

@@ -11,7 +11,7 @@ export SMB_CONF_PATH="/home/container/runtime/smb.conf"
 export HOME="/home/container"
 
 mkdir -p /home/container/data/samba /home/container/logs /home/container/offload_mount /home/container/runtime /home/container/.npm
-rm -f /home/container/runtime/fuse_ready /home/container/runtime/fuse_failed
+rm -f /home/container/data/fuse_ready /home/container/data/fuse_failed
 chmod 777 /home/container/offload_mount
 chown -R "${APP_UID}:${APP_GID}" /home/container
 chown -R root:root /home/container/data/samba /home/container/logs /home/container/runtime
@@ -78,7 +78,7 @@ start_smb() {
   if [[ "$SMB_ENABLED" != "true" ]]; then
     return 0
   fi
-  if [[ ! -f /home/container/runtime/fuse_ready ]]; then
+  if [[ ! -f /home/container/data/fuse_ready ]]; then
     echo "FUSE not ready, skipping SMB start" >> /home/container/logs/samba.log
     return 1
   fi
@@ -103,7 +103,7 @@ start_app
 
 if [[ "$SMB_ENABLED" == "true" ]]; then
   for _ in {1..20}; do
-    if [[ -f /home/container/runtime/fuse_ready ]]; then
+    if [[ -f /home/container/data/fuse_ready ]]; then
       break
     fi
     sleep 1
