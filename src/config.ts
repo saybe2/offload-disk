@@ -31,6 +31,7 @@ export const config = {
   uploadRetryMax: toNumber(process.env.UPLOAD_RETRY_MAX, 5),
   uploadRetryBaseMs: toNumber(process.env.UPLOAD_RETRY_BASE_MS, 1500),
   uploadRetryMaxMs: toNumber(process.env.UPLOAD_RETRY_MAX_MS, 15000),
+  uploadMaxFiles: toNumber(process.env.UPLOAD_MAX_FILES, 10000),
   streamUseDisk: (process.env.STREAM_USE_DISK || "false") === "true",
   smbEnabled: (process.env.SMB_ENABLED || "false") === "true",
   smbMount: process.env.SMB_MOUNT || "/home/container/offload_mount",

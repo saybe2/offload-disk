@@ -8,6 +8,8 @@ const uploadEta = document.getElementById('uploadEta');
 const logoutBtn = document.getElementById('logoutBtn');
 const adminLink = document.getElementById('adminLink');
 const uploadArea = document.getElementById('uploadArea');
+const folderInput = document.getElementById('folderInput');
+const uploadFolderBtn = document.getElementById('uploadFolderBtn');
 const listTitle = document.getElementById('listTitle');
 const folderPriorityWrap = document.getElementById('folderPriorityWrap');
 const folderPrioritySelect = document.getElementById('folderPrioritySelect');
@@ -703,8 +705,13 @@ async function uploadFiles(fileList) {
   if (currentFolderId) {
     data.append('folderId', currentFolderId);
   }
-  for (const file of fileList) {
+  const fileEntries = Array.from(fileList);
+  const hasRelative = fileEntries.some((file) => file.webkitRelativePath);
+  for (const file of fileEntries) {
     data.append('files', file);
+    if (hasRelative && file.webkitRelativePath) {
+      data.append('paths', file.webkitRelativePath);
+    }
   }
 
   const streamSingle = fileList.length === 1 && fileList[0].size >= (8 * 1024 * 1024);
@@ -1137,20 +1144,42 @@ uploadForm.addEventListener('submit', async (e) => {
   await uploadFiles(input.files);
 });
 
-uploadArea.addEventListener('dragover', (e) => {
+uploadFolderBtn.addEventListener('click', () => {
+  folderInput.click();
+});
+
+folderInput.addEventListener('change', async () => {
+  await uploadFiles(folderInput.files);
+  folderInput.value = '';
+});
+
+function isFileDrag(e) {
+  const types = Array.from(e.dataTransfer?.types || []);
+  return types.includes('Files');
+}
+
+document.addEventListener('dragover', (e) => {
+  if (dragArchiveId) return;
+  if (!isFileDrag(e)) return;
   e.preventDefault();
   uploadArea.classList.add('drop');
 });
 
-uploadArea.addEventListener('dragleave', () => {
+document.addEventListener('dragleave', (e) => {
+  if (dragArchiveId) return;
+  if (!isFileDrag(e)) return;
   uploadArea.classList.remove('drop');
 });
 
-uploadArea.addEventListener('drop', async (e) => {
+document.addEventListener('drop', async (e) => {
+  if (dragArchiveId) return;
+  if (!isFileDrag(e)) return;
   e.preventDefault();
   uploadArea.classList.remove('drop');
   const files = e.dataTransfer.files;
-  await uploadFiles(files);
+  if (files && files.length > 0) {
+    await uploadFiles(files);
+  }
 });
 
 newFolderBtn.addEventListener('click', async () => {

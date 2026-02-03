@@ -32,7 +32,9 @@
         <form id="uploadForm">
           <label>Select files</label>
           <input type="file" name="files" multiple />
+          <input type="file" id="folderInput" webkitdirectory directory multiple class="hidden" />
           <button type="submit">Upload</button>
+          <button type="button" id="uploadFolderBtn">Upload Folder</button>
           <progress id="serverProgress" max="100" value="0"></progress>
           <div id="uploadStatus" class="status"></div>
           <div id="uploadEta" class="status-meta"></div>

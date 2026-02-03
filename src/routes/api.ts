@@ -1,4 +1,5 @@
 import { Router } from "express";
+import type { Request, Response, NextFunction } from "express";
 import path from "path";
 import fs from "fs";
 import archiver from "archiver";
@@ -23,7 +24,7 @@ import { uploadBufferToWebhook, uploadToWebhook } from "../services/discord.js";
 
 const upload = multer({
   dest: path.join(config.cacheDir, "uploads_tmp"),
-  limits: { files: 200 }
+  limits: config.uploadMaxFiles > 0 ? { files: config.uploadMaxFiles } : undefined
 });
 
 export const apiRouter = Router();
@@ -84,9 +85,9 @@ async function uploadBufferWithRetry(buffer: Buffer, filename: string, webhookUr
   }
 }
 
-function splitUploads(files: Express.Multer.File[]) {
-  const groups: Express.Multer.File[][] = [];
-  let current: Express.Multer.File[] = [];
+function splitUploads<T extends { size: number }>(files: T[]) {
+  const groups: T[][] = [];
+  let current: T[] = [];
   let currentSize = 0;
 
   for (const file of files) {
@@ -181,6 +182,9 @@ apiRouter.post("/upload", requireAuth, upload.any(), async (req, res) => {
   }
 
   const folderId = (req.body.folderId as string) || null;
+  const pathListRaw = (req.body.paths as string | string[] | undefined) || [];
+  const pathList = Array.isArray(pathListRaw) ? pathListRaw : [pathListRaw];
+  const hasPaths = pathList.length === files.length && pathList.some((p) => p && p.trim().length > 0);
   let folderRef: any = null;
   let basePriority = 2;
   if (folderId) {
@@ -191,16 +195,80 @@ apiRouter.post("/upload", requireAuth, upload.any(), async (req, res) => {
     folderRef = folder._id;
     basePriority = folder.priority ?? 2;
   }
-  const groups = splitUploads(files);
   const archiveIds: string[] = [];
 
-  for (const [groupIndex, group] of groups.entries()) {
-    const isBundle = group.length > 1;
-    const ordered = isBundle ? [...group].sort((a, b) => a.size - b.size) : group;
-    const displayName = makeDisplayName(ordered);
+  const folderCache = new Map<string, any>();
+  const getOrCreateFolder = async (baseId: string | null, segments: string[]) => {
+    let parentId = baseId;
+    for (const segment of segments) {
+      const name = segment.trim();
+      if (!name) continue;
+      const key = `${parentId || "root"}:${name}`;
+      let folder = folderCache.get(key);
+      if (!folder) {
+        folder = await Folder.findOne({ userId: user.id, parentId, name });
+        if (!folder) {
+          folder = await Folder.create({ userId: user.id, name, parentId, priority: 2 });
+        }
+        folderCache.set(key, folder);
+      }
+      if (!folder) {
+        continue;
+      }
+      parentId = folder._id;
+    }
+    return parentId;
+  };
+
+  const extractFolderSegments = (filePath: string) => {
+    const normalized = filePath.replace(/\\/g, "/");
+    const parts = normalized.split("/").filter(Boolean);
+    parts.pop();
+    return parts;
+  };
+
+  const items = [] as { file: Express.Multer.File; folderId: any }[];
+  for (let i = 0; i < files.length; i += 1) {
+    const file = files[i];
+    let targetFolderId = folderRef;
+    if (hasPaths) {
+      const rel = pathList[i] || "";
+      const segments = extractFolderSegments(rel);
+      if (segments.length > 0) {
+        targetFolderId = await getOrCreateFolder(folderRef ? folderRef.toString() : null, segments);
+      }
+    }
+    items.push({ file, folderId: targetFolderId });
+  }
+
+  const groupsByFolder = new Map<string, { folderId: any; items: { file: Express.Multer.File; folderId: any }[] }>();
+  for (const item of items) {
+    const key = item.folderId ? item.folderId.toString() : "root";
+    const bucket = groupsByFolder.get(key);
+    if (bucket) {
+      bucket.items.push(item);
+    } else {
+      groupsByFolder.set(key, { folderId: item.folderId, items: [item] });
+    }
+  }
+
+  const groupedUploads: { folderId: any; items: { file: Express.Multer.File; folderId: any }[] }[] = [];
+  for (const bucket of groupsByFolder.values()) {
+    const split = splitUploads(bucket.items.map((i) => ({ size: i.file.size, item: i })));
+    for (const group of split) {
+      groupedUploads.push({ folderId: bucket.folderId, items: group.map((g: any) => g.item) });
+    }
+  }
+
+  for (const [groupIndex, group] of groupedUploads.entries()) {
+    const isBundle = group.items.length > 1;
+    const ordered = isBundle
+      ? [...group.items].sort((a, b) => a.file.size - b.file.size)
+      : group.items;
+    const displayName = makeDisplayName(ordered.map((item) => item.file));
     const downloadName = isBundle
       ? `bundle_${Date.now()}_${groupIndex}.zip`
-      : ordered[0].originalname.replace(/[\\/]/g, "_");
+      : ordered[0].file.originalname.replace(/[\\/]/g, "_");
     const archiveName = sanitizeName(downloadName);
     stagingDir = path.join(
       config.cacheDir,
@@ -211,7 +279,8 @@ apiRouter.post("/upload", requireAuth, upload.any(), async (req, res) => {
     await fs.promises.mkdir(stagingDir, { recursive: true });
 
     const archiveFiles = [] as { path: string; name: string; originalName: string; size: number }[];
-    for (const [index, file] of ordered.entries()) {
+    for (const [index, item] of ordered.entries()) {
+      const file = item.file;
       const safeName = `${index}_${sanitizeName(file.originalname)}`;
       const dest = path.join(stagingDir, safeName);
       await fs.promises.rename(file.path, dest);
@@ -223,7 +292,7 @@ apiRouter.post("/upload", requireAuth, upload.any(), async (req, res) => {
       return;
     }
 
-    const groupSize = ordered.reduce((sum, f) => sum + f.size, 0);
+    const groupSize = ordered.reduce((sum, f) => sum + f.file.size, 0);
 
     const archive = await Archive.create({
       userId: user.id,
@@ -231,7 +300,7 @@ apiRouter.post("/upload", requireAuth, upload.any(), async (req, res) => {
       displayName,
       downloadName,
       isBundle,
-      folderId: folderRef,
+      folderId: group.folderId,
       priority: basePriority,
       priorityOverride: false,
       status: "queued",
@@ -268,6 +337,7 @@ apiRouter.post("/upload-stream", requireAuth, async (req, res) => {
   }
 
   let folderId: string | null = null;
+  let relativePath: string | null = null;
   let archiveId: string | null = null;
   let receiveDone: Promise<{ originalSize: number }> | null = null;
   let uploadDone: Promise<void> | null = null;
@@ -307,6 +377,9 @@ apiRouter.post("/upload-stream", requireAuth, async (req, res) => {
     if (name === "folderId") {
       folderId = value || null;
     }
+    if (name === "paths") {
+      relativePath = value || null;
+    }
   });
 
   bb.on("file", (name: string, file: NodeJS.ReadableStream, info: { filename?: string }) => {
@@ -330,6 +403,21 @@ apiRouter.post("/upload-stream", requireAuth, async (req, res) => {
         }
         folderRef = folder._id;
         basePriority = folder.priority ?? 2;
+      }
+      if (relativePath) {
+        const segments = relativePath.replace(/\\/g, "/").split("/").filter(Boolean);
+        segments.pop();
+        let parentId = folderRef ? folderRef.toString() : null;
+        for (const segment of segments) {
+          const name = segment.trim();
+          if (!name) continue;
+          let folder = await Folder.findOne({ userId: user.id, parentId, name });
+          if (!folder) {
+            folder = await Folder.create({ userId: user.id, name, parentId, priority: 2 });
+          }
+          parentId = folder._id.toString();
+          folderRef = folder._id;
+        }
       }
 
       const stagingDir = path.join(
@@ -1128,4 +1216,14 @@ apiRouter.patch("/archives/:id/rename", requireAuth, async (req, res) => {
   await archive.save();
   log("api", `rename ${archive.id} name=${safeName}`);
   return res.json({ ok: true });
+});
+
+apiRouter.use((err: any, _req: Request, res: Response, next: NextFunction) => {
+  if (err instanceof multer.MulterError) {
+    if (err.code === "LIMIT_FILE_COUNT") {
+      return res.status(413).json({ error: "too_many_files" });
+    }
+    return res.status(400).json({ error: "upload_error" });
+  }
+  return next(err);
 });
