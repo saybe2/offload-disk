@@ -61,6 +61,8 @@ let lastRenderedItems = [];
 let pendingDeleteResolve = null;
 let shareTarget = null;
 let priorityTarget = null;
+const ROOT_DROP = '__root__';
+let dropUploadFolderId = null;
 const archiveProgress = new Map();
 
 const priorities = [
@@ -424,21 +426,43 @@ function renderArchives() {
         loadArchives();
       });
       trUp.addEventListener('dragover', (e) => {
-        e.preventDefault();
-        trUp.classList.add('drop');
+        if (dragArchiveId) {
+          e.preventDefault();
+          trUp.classList.add('drop');
+          return;
+        }
+        if (isFileDrag(e)) {
+          e.preventDefault();
+          trUp.classList.add('drop');
+          dropUploadFolderId = parentId ?? ROOT_DROP;
+        }
       });
-      trUp.addEventListener('dragleave', () => trUp.classList.remove('drop'));
+      trUp.addEventListener('dragleave', () => {
+        trUp.classList.remove('drop');
+        if (dropUploadFolderId === parentId || (parentId === null && dropUploadFolderId === ROOT_DROP)) {
+          dropUploadFolderId = null;
+        }
+      });
       trUp.addEventListener('drop', async (e) => {
         e.preventDefault();
         trUp.classList.remove('drop');
-        if (!dragArchiveId) return;
-        await fetch(`/api/archives/${dragArchiveId}/move`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ folderId: parentId })
-        });
-        dragArchiveId = null;
-        loadArchives();
+        if (dragArchiveId) {
+          await fetch(`/api/archives/${dragArchiveId}/move`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ folderId: parentId })
+          });
+          dragArchiveId = null;
+          loadArchives();
+          return;
+        }
+        if (isFileDrag(e)) {
+          const files = e.dataTransfer.files;
+          if (files && files.length > 0) {
+            await uploadFiles(files, parentId ?? null);
+          }
+          dropUploadFolderId = null;
+        }
       });
       archiveList.appendChild(trUp);
     }
@@ -460,21 +484,43 @@ function renderArchives() {
       });
 
       tr.addEventListener('dragover', (e) => {
-        e.preventDefault();
-        tr.classList.add('drop');
+        if (dragArchiveId) {
+          e.preventDefault();
+          tr.classList.add('drop');
+          return;
+        }
+        if (isFileDrag(e)) {
+          e.preventDefault();
+          tr.classList.add('drop');
+          dropUploadFolderId = folder._id;
+        }
       });
-      tr.addEventListener('dragleave', () => tr.classList.remove('drop'));
+      tr.addEventListener('dragleave', () => {
+        tr.classList.remove('drop');
+        if (dropUploadFolderId === folder._id) {
+          dropUploadFolderId = null;
+        }
+      });
       tr.addEventListener('drop', async (e) => {
         e.preventDefault();
         tr.classList.remove('drop');
-        if (!dragArchiveId) return;
-        await fetch(`/api/archives/${dragArchiveId}/move`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ folderId: folder._id })
-        });
-        dragArchiveId = null;
-        loadArchives();
+        if (dragArchiveId) {
+          await fetch(`/api/archives/${dragArchiveId}/move`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ folderId: folder._id })
+          });
+          dragArchiveId = null;
+          loadArchives();
+          return;
+        }
+        if (isFileDrag(e)) {
+          const files = e.dataTransfer.files;
+          if (files && files.length > 0) {
+            await uploadFiles(files, folder._id);
+          }
+          dropUploadFolderId = null;
+        }
       });
 
       const nameTd = document.createElement('td');
@@ -691,7 +737,7 @@ function handleRowSelection(item, key, index, event) {
   renderArchives();
 }
 
-async function uploadFiles(fileList) {
+async function uploadFiles(fileList, targetFolderId) {
   if (!fileList || fileList.length === 0) return;
   uploadStatus.textContent = 'Uploading to server...';
   serverProgress.value = 0;
@@ -702,13 +748,15 @@ async function uploadFiles(fileList) {
   let lastSpeed = 0;
 
   const data = new FormData();
-  if (currentFolderId) {
-    data.append('folderId', currentFolderId);
+  const folderId = targetFolderId === undefined ? currentFolderId : targetFolderId;
+  if (folderId) {
+    data.append('folderId', folderId);
   }
   const fileEntries = Array.from(fileList);
   const hasRelative = fileEntries.some((file) => file.webkitRelativePath);
   for (const file of fileEntries) {
     data.append('files', file);
+    data.append('names', file.name);
     if (hasRelative && file.webkitRelativePath) {
       data.append('paths', file.webkitRelativePath);
     }
@@ -1162,6 +1210,9 @@ document.addEventListener('dragover', (e) => {
   if (dragArchiveId) return;
   if (!isFileDrag(e)) return;
   e.preventDefault();
+  if (!e.target.closest('.folder-row-item')) {
+    dropUploadFolderId = null;
+  }
   uploadArea.classList.add('drop');
 });
 
@@ -1169,6 +1220,9 @@ document.addEventListener('dragleave', (e) => {
   if (dragArchiveId) return;
   if (!isFileDrag(e)) return;
   uploadArea.classList.remove('drop');
+  if (!e.target.closest('.folder-row-item')) {
+    dropUploadFolderId = null;
+  }
 });
 
 document.addEventListener('drop', async (e) => {
@@ -1178,8 +1232,10 @@ document.addEventListener('drop', async (e) => {
   uploadArea.classList.remove('drop');
   const files = e.dataTransfer.files;
   if (files && files.length > 0) {
-    await uploadFiles(files);
+    const target = dropUploadFolderId === ROOT_DROP ? null : dropUploadFolderId;
+    await uploadFiles(files, target);
   }
+  dropUploadFolderId = null;
 });
 
 newFolderBtn.addEventListener('click', async () => {

@@ -106,11 +106,11 @@ function normalizeFilename(name: string) {
   return name;
 }
 
-function makeDisplayName(files: Express.Multer.File[]) {
-  if (files.length === 1) {
-    return normalizeFilename(files[0].originalname).replace(/[\\/]/g, "_");
+function makeDisplayName(names: string[]) {
+  if (names.length === 1) {
+    return normalizeFilename(names[0]).replace(/[\\/]/g, "_");
   }
-  return `Bundle (${files.length} files)`;
+  return `Bundle (${names.length} files)`;
 }
 
 function isTransientError(err: unknown) {
@@ -256,8 +256,11 @@ apiRouter.post("/upload", requireAuth, upload.any(), async (req, res) => {
 
   const folderId = (req.body.folderId as string) || null;
   const pathListRaw = (req.body.paths as string | string[] | undefined) || [];
+  const nameListRaw = (req.body.names as string | string[] | undefined) || [];
   const pathList = Array.isArray(pathListRaw) ? pathListRaw : [pathListRaw];
+  const nameList = Array.isArray(nameListRaw) ? nameListRaw : [nameListRaw];
   const hasPaths = pathList.length === files.length && pathList.some((p) => p && p.trim().length > 0);
+  const hasNames = nameList.length === files.length && nameList.some((n) => n && n.trim().length > 0);
   let folderRef: any = null;
   let basePriority = 2;
   if (folderId) {
@@ -300,9 +303,10 @@ apiRouter.post("/upload", requireAuth, upload.any(), async (req, res) => {
     return parts;
   };
 
-  const items = [] as { file: Express.Multer.File; folderId: any }[];
+  const items = [] as { file: Express.Multer.File; folderId: any; clientName?: string }[];
   for (let i = 0; i < files.length; i += 1) {
     const file = files[i];
+    const clientName = hasNames ? nameList[i] : undefined;
     let targetFolderId = folderRef;
     if (hasPaths) {
       const rel = pathList[i] || "";
@@ -311,10 +315,10 @@ apiRouter.post("/upload", requireAuth, upload.any(), async (req, res) => {
         targetFolderId = await getOrCreateFolder(folderRef ? folderRef.toString() : null, segments);
       }
     }
-    items.push({ file, folderId: targetFolderId });
+    items.push({ file, folderId: targetFolderId, clientName });
   }
 
-  const groupsByFolder = new Map<string, { folderId: any; items: { file: Express.Multer.File; folderId: any }[] }>();
+  const groupsByFolder = new Map<string, { folderId: any; items: { file: Express.Multer.File; folderId: any; clientName?: string }[] }>();
   for (const item of items) {
     const key = item.folderId ? item.folderId.toString() : "root";
     const bucket = groupsByFolder.get(key);
@@ -325,7 +329,7 @@ apiRouter.post("/upload", requireAuth, upload.any(), async (req, res) => {
     }
   }
 
-  const groupedUploads: { folderId: any; items: { file: Express.Multer.File; folderId: any }[] }[] = [];
+  const groupedUploads: { folderId: any; items: { file: Express.Multer.File; folderId: any; clientName?: string }[] }[] = [];
   for (const bucket of groupsByFolder.values()) {
     const split = splitUploads(bucket.items.map((i) => ({ size: i.file.size, item: i })));
     for (const group of split) {
@@ -338,10 +342,10 @@ apiRouter.post("/upload", requireAuth, upload.any(), async (req, res) => {
     const ordered = isBundle
       ? [...group.items].sort((a, b) => a.file.size - b.file.size)
       : group.items;
-    const displayName = makeDisplayName(ordered.map((item) => item.file));
+    const displayName = makeDisplayName(ordered.map((item) => item.clientName || item.file.originalname));
     const downloadName = isBundle
       ? `bundle_${Date.now()}_${groupIndex}.zip`
-      : normalizeFilename(ordered[0].file.originalname).replace(/[\\/]/g, "_");
+      : normalizeFilename(ordered[0].clientName || ordered[0].file.originalname).replace(/[\\/]/g, "_");
     const archiveName = sanitizeName(downloadName);
     stagingDir = path.join(
       config.cacheDir,
@@ -354,7 +358,7 @@ apiRouter.post("/upload", requireAuth, upload.any(), async (req, res) => {
     const archiveFiles = [] as { path: string; name: string; originalName: string; size: number }[];
     for (const [index, item] of ordered.entries()) {
       const file = item.file;
-      const safeOriginal = normalizeFilename(file.originalname);
+      const safeOriginal = normalizeFilename(item.clientName || file.originalname);
       const safeName = `${index}_${sanitizeName(safeOriginal)}`;
       const dest = path.join(stagingDir, safeName);
       await fs.promises.rename(file.path, dest);
@@ -412,6 +416,7 @@ apiRouter.post("/upload-stream", requireAuth, async (req, res) => {
 
   let folderId: string | null = null;
   let relativePath: string | null = null;
+  let clientName: string | null = null;
   let archiveId: string | null = null;
   let receiveDone: Promise<{ originalSize: number }> | null = null;
   let uploadDone: Promise<void> | null = null;
@@ -454,10 +459,13 @@ apiRouter.post("/upload-stream", requireAuth, async (req, res) => {
     if (name === "paths") {
       relativePath = value || null;
     }
+    if (name === "names") {
+      clientName = value || null;
+    }
   });
 
   bb.on("file", (name: string, file: NodeJS.ReadableStream, info: { filename?: string }) => {
-    const rawFilename = (info?.filename || "file").toString();
+    const rawFilename = (clientName || info?.filename || "file").toString();
     const filename = normalizeFilename(rawFilename);
     const safeName = filename.replace(/[\\/]/g, "_");
 
