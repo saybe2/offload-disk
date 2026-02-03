@@ -21,7 +21,10 @@ import { Webhook } from "../models/Webhook.js";
 import { deriveKey } from "../services/crypto.js";
 import { uploadBufferToWebhook, uploadToWebhook } from "../services/discord.js";
 
-const upload = multer({ dest: path.join(config.cacheDir, "uploads_tmp") });
+const upload = multer({
+  dest: path.join(config.cacheDir, "uploads_tmp"),
+  limits: { files: 200 }
+});
 
 export const apiRouter = Router();
 
@@ -115,7 +118,7 @@ function splitUploads(files: Express.Multer.File[]) {
   return groups;
 }
 
-apiRouter.post("/upload", requireAuth, upload.array("files", 200), async (req, res) => {
+apiRouter.post("/upload", requireAuth, upload.any(), async (req, res) => {
   let aborted = false;
   let stagingDir: string | null = null;
   let tempPaths: string[] = [];
@@ -155,6 +158,7 @@ apiRouter.post("/upload", requireAuth, upload.array("files", 200), async (req, r
   }
 
   const totalSize = files.reduce((sum, f) => sum + f.size, 0);
+  log("api", `upload start files=${files.length} size=${totalSize}`);
   if (user.quotaBytes > 0 && user.usedBytes + totalSize > user.quotaBytes) {
     for (const f of files) {
       await fs.promises.unlink(f.path).catch(() => undefined);
