@@ -2,6 +2,8 @@ import { Router } from "express";
 import type { Request, Response, NextFunction } from "express";
 import path from "path";
 import fs from "fs";
+import { Readable } from "stream";
+import { pipeline } from "stream/promises";
 import archiver from "archiver";
 import multer from "multer";
 import busboy from "busboy";
@@ -20,9 +22,10 @@ import { log } from "../logger.js";
 import { getDescendantFolderIds } from "../services/folders.js";
 import { Webhook } from "../models/Webhook.js";
 import { deriveKey } from "../services/crypto.js";
-import { uploadBufferToWebhook, uploadToWebhook } from "../services/discord.js";
+import { fetchWebhookMessage, uploadBufferToWebhook, uploadToWebhook } from "../services/discord.js";
 import { sanitizeFilename } from "../utils/names.js";
-import { cleanupOldDownloads, ensureDir, ensureDownloadFile, serveFileWithRange } from "../services/downloads.js";
+import { serveFileWithRange } from "../services/downloads.js";
+import { fetch } from "undici";
 
 const upload = multer({
   dest: path.join(config.cacheDir, "uploads_tmp"),
@@ -126,6 +129,29 @@ function isTransientError(err: unknown) {
     if (code >= 500 && code <= 599) return true;
   }
   return false;
+}
+
+async function refreshPartUrl(archiveId: string, part: any) {
+  const webhookId = part.webhookId ? String(part.webhookId) : null;
+  const messageId = part.messageId;
+  if (!webhookId || !messageId) {
+    throw new Error("missing_webhook_metadata");
+  }
+  const hook = await Webhook.findById(webhookId).lean();
+  if (!hook?.url) {
+    throw new Error("missing_webhook");
+  }
+  const payload = await fetchWebhookMessage(hook.url, messageId);
+  const freshUrl = payload.attachments?.[0]?.url;
+  if (!freshUrl) {
+    throw new Error("missing_attachment_url");
+  }
+  await Archive.updateOne(
+    { _id: archiveId, "parts.messageId": messageId },
+    { $set: { "parts.$.url": freshUrl } }
+  );
+  part.url = freshUrl;
+  return freshUrl;
 }
 
 async function uploadWithRetry(partPath: string, webhookUrl: string, content: string) {
@@ -779,21 +805,6 @@ apiRouter.get("/archives/:id/download", requireAuth, async (req, res) => {
 
   try {
     log("download", `start ${archive.id}`);
-    if (typeof req.headers.range === "string") {
-      const downloadDir = path.join(config.cacheDir, "downloads");
-      await ensureDir(downloadDir);
-      await cleanupOldDownloads(downloadDir, config.downloadCacheTtlHours * 60 * 60 * 1000);
-      const suffix = archive.isBundle ? "_bundle" : "";
-      const outputPath = path.join(downloadDir, `${archive.id}${suffix}`);
-      const expectedSize = archive.isBundle ? undefined : archive.files?.[0]?.size || archive.originalSize;
-      const ready = await ensureDownloadFile(outputPath, expectedSize);
-      if (!ready) {
-        await restoreArchiveToFile(archive, outputPath, config.cacheDir, config.masterKey);
-      }
-      const downloadName = archive.downloadName || (archive.isBundle ? `${archive.name}.zip` : archive.name);
-      await serveFileWithRange(req, res, outputPath, downloadName);
-      return;
-    }
     await streamArchiveToResponse(archive, res, config.cacheDir, config.masterKey);
   } catch (err) {
     log("download", `error ${archive.id} ${(err as Error).message}`);
@@ -906,26 +917,6 @@ apiRouter.get("/archives/:id/files/:index/download", requireAuth, async (req, re
 
   try {
     log("download", `start ${archive.id} file=${index}`);
-    const file = archive.files?.[index];
-    if (typeof req.headers.range === "string") {
-      const downloadDir = path.join(config.cacheDir, "downloads");
-      await ensureDir(downloadDir);
-      await cleanupOldDownloads(downloadDir, config.downloadCacheTtlHours * 60 * 60 * 1000);
-      const outputPath = path.join(downloadDir, `${archive.id}_file_${index}`);
-      const expectedSize = file?.size || archive.originalSize;
-      const ready = await ensureDownloadFile(outputPath, expectedSize);
-      if (!ready) {
-        if (archive.isBundle) {
-          await restoreArchiveFileToFile(archive, index, outputPath, config.cacheDir, config.masterKey);
-        } else {
-          await restoreArchiveToFile(archive, outputPath, config.cacheDir, config.masterKey);
-        }
-      }
-      const downloadName = (file?.originalName || file?.name || archive.displayName || archive.name).replace(/[\\/]/g, "_");
-      await serveFileWithRange(req, res, outputPath, downloadName);
-      return;
-    }
-
     if (!archive.isBundle) {
       await streamArchiveToResponse(archive, res, config.cacheDir, config.masterKey);
       return;
@@ -934,6 +925,129 @@ apiRouter.get("/archives/:id/files/:index/download", requireAuth, async (req, re
   } catch (err) {
     log("download", `error ${archive.id} file=${index} ${(err as Error).message}`);
     return res.status(500).json({ error: "restore_failed" });
+  }
+});
+
+apiRouter.get("/archives/:id/parts", requireAuth, async (req, res) => {
+  const archive = await Archive.findById(req.params.id).lean();
+  if (!archive) {
+    return res.status(404).json({ error: "not_found" });
+  }
+  if (req.session.role !== "admin" && archive.userId.toString() !== req.session.userId) {
+    return res.status(403).json({ error: "forbidden" });
+  }
+  if (archive.status !== "ready") {
+    return res.status(409).json({ error: "not_ready" });
+  }
+
+  const parts = uniqueParts(archive.parts || []).map((part) => ({
+    index: part.index,
+    size: part.size,
+    hash: part.hash,
+    url: part.url
+  }));
+
+  return res.json({
+    archiveId: archive._id,
+    status: archive.status,
+    isBundle: archive.isBundle,
+    chunkSizeBytes: archive.chunkSizeBytes || computed.chunkSizeBytes,
+    iv: archive.iv,
+    authTag: archive.authTag,
+    originalSize: archive.originalSize,
+    encryptedSize: archive.encryptedSize,
+    downloadName: archive.downloadName,
+    displayName: archive.displayName,
+    files: (archive.files || []).map((file: any) => ({
+      originalName: file.originalName || file.name,
+      size: file.size
+    })),
+    parts
+  });
+});
+
+apiRouter.post("/archives/:id/parts/:index/refresh", requireAuth, async (req, res) => {
+  const archive = await Archive.findById(req.params.id);
+  if (!archive) {
+    return res.status(404).json({ error: "not_found" });
+  }
+  if (req.session.role !== "admin" && archive.userId.toString() !== req.session.userId) {
+    return res.status(403).json({ error: "forbidden" });
+  }
+  if (archive.status !== "ready") {
+    return res.status(409).json({ error: "not_ready" });
+  }
+
+  const index = Number(req.params.index);
+  if (!Number.isInteger(index) || index < 0) {
+    return res.status(400).json({ error: "bad_index" });
+  }
+  const part = uniqueParts(archive.parts || []).find((p) => p.index === index);
+  if (!part) {
+    return res.status(404).json({ error: "part_not_found" });
+  }
+
+  try {
+    const url = await refreshPartUrl(archive.id, part);
+    return res.json({ ok: true, url });
+  } catch (err) {
+    return res.status(500).json({ error: (err as Error).message || "refresh_failed" });
+  }
+});
+
+apiRouter.get("/archives/:id/parts/:index/relay", requireAuth, async (req, res) => {
+  const archive = await Archive.findById(req.params.id);
+  if (!archive) {
+    return res.status(404).json({ error: "not_found" });
+  }
+  if (req.session.role !== "admin" && archive.userId.toString() !== req.session.userId) {
+    return res.status(403).json({ error: "forbidden" });
+  }
+  if (archive.status !== "ready") {
+    return res.status(409).json({ error: "not_ready" });
+  }
+
+  const index = Number(req.params.index);
+  if (!Number.isInteger(index) || index < 0) {
+    return res.status(400).json({ error: "bad_index" });
+  }
+  const part = uniqueParts(archive.parts || []).find((p) => p.index === index);
+  if (!part?.url) {
+    return res.status(404).json({ error: "part_not_found" });
+  }
+
+  const fetchWithRetry = async () => {
+    let response = await fetch(part.url);
+    if (response.status === 404) {
+      try {
+        await refreshPartUrl(archive.id, part);
+        response = await fetch(part.url);
+      } catch {
+        // fall through with original response
+      }
+    }
+    return response;
+  };
+
+  const response = await fetchWithRetry();
+  if (!response.ok || !response.body) {
+    const text = await response.text().catch(() => "");
+    return res.status(502).json({ error: `relay_failed:${response.status}:${text}` });
+  }
+
+  res.setHeader("Content-Type", "application/octet-stream");
+  if (part.size) {
+    res.setHeader("Content-Length", part.size);
+  }
+  res.setHeader("Cache-Control", "no-store");
+
+  try {
+    const body = Readable.fromWeb(response.body as any);
+    await pipeline(body, res);
+  } catch {
+    if (!res.headersSent) {
+      res.status(500).json({ error: "relay_error" });
+    }
   }
 });
 

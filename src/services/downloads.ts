@@ -1,5 +1,4 @@
 import fs from "fs";
-import path from "path";
 import type { Request, Response } from "express";
 import mime from "mime-types";
 
@@ -20,22 +19,6 @@ function parseRange(range: string, size: number) {
   if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
   if (start > end || start < 0 || end >= size) return null;
   return { start, end };
-}
-
-export async function ensureDownloadFile(
-  filePath: string,
-  expectedSize?: number
-) {
-  try {
-    const stat = await fs.promises.stat(filePath);
-    if (expectedSize && stat.size !== expectedSize) {
-      await fs.promises.unlink(filePath).catch(() => undefined);
-      return false;
-    }
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 export async function serveFileWithRange(
@@ -74,27 +57,4 @@ export async function serveFileWithRange(
 
 export async function ensureDir(dirPath: string) {
   await fs.promises.mkdir(dirPath, { recursive: true });
-}
-
-export async function cleanupOldDownloads(dirPath: string, ttlMs: number) {
-  const now = Date.now();
-  let entries: string[] = [];
-  try {
-    entries = await fs.promises.readdir(dirPath);
-  } catch {
-    return;
-  }
-  await Promise.all(
-    entries.map(async (entry) => {
-      const full = path.join(dirPath, entry);
-      try {
-        const stat = await fs.promises.stat(full);
-        if (now - stat.mtimeMs > ttlMs) {
-          await fs.promises.unlink(full).catch(() => undefined);
-        }
-      } catch {
-        return;
-      }
-    })
-  );
 }
