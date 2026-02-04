@@ -476,6 +476,11 @@ apiRouter.post("/upload-stream", requireAuth, async (req, res) => {
       }
     } catch {}
     try {
+      if (activeFile && activeRawWrite) {
+        try {
+          (activeFile as any).unpipe?.(activeRawWrite);
+        } catch {}
+      }
       activeRawWrite?.destroy();
     } catch {}
   };
@@ -665,6 +670,11 @@ apiRouter.post("/upload-stream", requireAuth, async (req, res) => {
       });
 
       if (rawWrite) {
+        rawWrite.on("error", (err) => {
+          if (clientAborted) return;
+          failed = err instanceof Error ? err : new Error("write_failed");
+          log("stream", `write error archive=${archive.id} err=${failed.message}`);
+        });
         file.pipe(rawWrite);
       }
       file.pipe(cipher);
