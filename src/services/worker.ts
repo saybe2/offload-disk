@@ -17,6 +17,15 @@ function log(message: string) {
   console.log(`[worker] ${new Date().toISOString()} ${message}`);
 }
 
+function startStage(archiveId: string, name: string) {
+  const started = Date.now();
+  log(`stage ${archiveId} ${name} start`);
+  return () => {
+    const elapsed = Date.now() - started;
+    log(`stage ${archiveId} ${name} done ${elapsed}ms`);
+  };
+}
+
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -104,9 +113,13 @@ async function processNextArchive() {
     await fs.promises.mkdir(workDir, { recursive: true });
     let inputPath = zipPath;
     if (archive.isBundle) {
+      const done = startStage(archive.id, "zip");
       if (!fs.existsSync(zipPath)) {
         await createZip(archive.files, zipPath);
+      } else {
+        log(`stage ${archive.id} zip reuse`);
       }
+      done();
     } else {
       if (!archive.files[0]) {
         throw new Error("missing_file");
@@ -115,13 +128,19 @@ async function processNextArchive() {
     }
 
     if (!fs.existsSync(encPath) || !archive.iv || !archive.authTag) {
+      const done = startStage(archive.id, "encrypt");
       const key = deriveKey(config.masterKey);
       const encMeta = await encryptFile(inputPath, encPath, key);
       archive.iv = encMeta.iv;
       archive.authTag = encMeta.authTag;
+      done();
+    } else {
+      log(`stage ${archive.id} encrypt reuse`);
     }
 
+    const splitDone = startStage(archive.id, "split");
     const parts = await splitFileIntoParts(encPath, computed.chunkSizeBytes, partsDir);
+    splitDone();
     const encStats = await fs.promises.stat(encPath);
 
     archive.encryptedSize = encStats.size;
@@ -146,6 +165,7 @@ async function processNextArchive() {
     let completed = archive.uploadedParts || uploadedParts.length;
 
     const concurrency = Math.max(1, Math.min(config.uploadPartsConcurrency, webhooks.length));
+    log(`upload ${archive.id} parts=${pendingParts.length}/${totalParts} concurrency=${concurrency}`);
 
     const workers = Array.from({ length: concurrency }, () => (async () => {
       while (true) {
