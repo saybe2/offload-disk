@@ -9,6 +9,7 @@ import { restoreArchiveFileToFile, restoreArchiveToFile } from "../services/rest
 import { createArchiveFromLocalFile } from "../services/archiveCreate.js";
 import { uniqueParts } from "../services/parts.js";
 import { log } from "../logger.js";
+import { sanitizeFilename } from "../utils/names.js";
 
 const READ_DIR = "smb_read";
 const WRITE_DIR = "smb_write";
@@ -42,7 +43,7 @@ function cacheKey(userId: string, folderId: string | null) {
 }
 
 function sanitizeName(name: string) {
-  return name.replace(/[\\/]/g, "_");
+  return sanitizeFilename(name);
 }
 
 async function getUserByName(username: string) {
@@ -74,7 +75,7 @@ function buildFileItems(archives: any[]) {
     const files = archive.files || [];
     if (archive.isBundle && files.length > 1) {
       files.forEach((file: any, index: number) => {
-        const baseName = file.originalName || file.name || archive.displayName || archive.name;
+        const baseName = sanitizeName(file.originalName || file.name || archive.displayName || archive.name);
         items.push({
           archive,
           fileIndex: index,
@@ -85,7 +86,7 @@ function buildFileItems(archives: any[]) {
       });
     } else if (files[0]) {
       const file = files[0];
-      const baseName = file.originalName || file.name || archive.displayName || archive.name;
+      const baseName = sanitizeName(file.originalName || file.name || archive.displayName || archive.name);
       items.push({
         archive,
         fileIndex: 0,
@@ -508,7 +509,7 @@ export function startFuse() {
         const username = parts[0];
         const user = await getUserByName(username);
         if (!user) return cb(ERR.EACCES);
-        const name = parts[parts.length - 1];
+        const name = sanitizeName(parts[parts.length - 1]);
         const parentSegments = parts.slice(1, -1);
         const parentFolder = parentSegments.length > 0 ? await findFolderByPath(user._id.toString(), parentSegments) : null;
         const parentId = parentFolder ? parentFolder._id : null;
@@ -547,7 +548,7 @@ export function startFuse() {
         const user = await getUserByName(destUsername);
         if (!user) return cb(ERR.EACCES);
 
-        const destName = destParts[destParts.length - 1];
+        const destName = sanitizeName(destParts[destParts.length - 1]);
         const destFolderSegments = destParts.slice(1, -1);
         const destFolder = destFolderSegments.length > 0
           ? await findFolderByPath(user._id.toString(), destFolderSegments)

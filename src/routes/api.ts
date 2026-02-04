@@ -21,6 +21,8 @@ import { getDescendantFolderIds } from "../services/folders.js";
 import { Webhook } from "../models/Webhook.js";
 import { deriveKey } from "../services/crypto.js";
 import { uploadBufferToWebhook, uploadToWebhook } from "../services/discord.js";
+import { sanitizeFilename } from "../utils/names.js";
+import { cleanupOldDownloads, ensureDir, ensureDownloadFile, serveFileWithRange } from "../services/downloads.js";
 
 const upload = multer({
   dest: path.join(config.cacheDir, "uploads_tmp"),
@@ -30,7 +32,7 @@ const upload = multer({
 export const apiRouter = Router();
 
 function sanitizeName(name: string) {
-  return name.replace(/[^a-zA-Z0-9._-]/g, "_");
+  return sanitizeFilename(name);
 }
 
 const CP1252_MAP: Record<number, number> = {
@@ -777,6 +779,21 @@ apiRouter.get("/archives/:id/download", requireAuth, async (req, res) => {
 
   try {
     log("download", `start ${archive.id}`);
+    if (typeof req.headers.range === "string") {
+      const downloadDir = path.join(config.cacheDir, "downloads");
+      await ensureDir(downloadDir);
+      await cleanupOldDownloads(downloadDir, config.downloadCacheTtlHours * 60 * 60 * 1000);
+      const suffix = archive.isBundle ? "_bundle" : "";
+      const outputPath = path.join(downloadDir, `${archive.id}${suffix}`);
+      const expectedSize = archive.isBundle ? undefined : archive.files?.[0]?.size || archive.originalSize;
+      const ready = await ensureDownloadFile(outputPath, expectedSize);
+      if (!ready) {
+        await restoreArchiveToFile(archive, outputPath, config.cacheDir, config.masterKey);
+      }
+      const downloadName = archive.downloadName || (archive.isBundle ? `${archive.name}.zip` : archive.name);
+      await serveFileWithRange(req, res, outputPath, downloadName);
+      return;
+    }
     await streamArchiveToResponse(archive, res, config.cacheDir, config.masterKey);
   } catch (err) {
     log("download", `error ${archive.id} ${(err as Error).message}`);
@@ -889,6 +906,26 @@ apiRouter.get("/archives/:id/files/:index/download", requireAuth, async (req, re
 
   try {
     log("download", `start ${archive.id} file=${index}`);
+    const file = archive.files?.[index];
+    if (typeof req.headers.range === "string") {
+      const downloadDir = path.join(config.cacheDir, "downloads");
+      await ensureDir(downloadDir);
+      await cleanupOldDownloads(downloadDir, config.downloadCacheTtlHours * 60 * 60 * 1000);
+      const outputPath = path.join(downloadDir, `${archive.id}_file_${index}`);
+      const expectedSize = file?.size || archive.originalSize;
+      const ready = await ensureDownloadFile(outputPath, expectedSize);
+      if (!ready) {
+        if (archive.isBundle) {
+          await restoreArchiveFileToFile(archive, index, outputPath, config.cacheDir, config.masterKey);
+        } else {
+          await restoreArchiveToFile(archive, outputPath, config.cacheDir, config.masterKey);
+        }
+      }
+      const downloadName = (file?.originalName || file?.name || archive.displayName || archive.name).replace(/[\\/]/g, "_");
+      await serveFileWithRange(req, res, outputPath, downloadName);
+      return;
+    }
+
     if (!archive.isBundle) {
       await streamArchiveToResponse(archive, res, config.cacheDir, config.masterKey);
       return;
@@ -970,6 +1007,7 @@ apiRouter.get("/folders", requireAuth, async (req, res) => {
 apiRouter.post("/folders", requireAuth, async (req, res) => {
   const { name, parentId } = req.body as { name?: string; parentId?: string | null };
   if (!name) return res.status(400).json({ error: "missing_name" });
+  const safeName = sanitizeFilename(name.trim());
   let parentRef: any = null;
   if (parentId) {
     const parent = await Folder.findById(parentId);
@@ -979,8 +1017,8 @@ apiRouter.post("/folders", requireAuth, async (req, res) => {
     parentRef = parent._id;
   }
   try {
-    const folder = await Folder.create({ userId: req.session.userId, name, parentId: parentRef, priority: 2 });
-    log("api", `folder create ${folder.id} name=${name}`);
+    const folder = await Folder.create({ userId: req.session.userId, name: safeName, parentId: parentRef, priority: 2 });
+    log("api", `folder create ${folder.id} name=${safeName}`);
     res.json({ id: folder.id });
   } catch (err: any) {
     if (err?.code === 11000) {
@@ -997,8 +1035,11 @@ apiRouter.patch("/folders/:id", requireAuth, async (req, res) => {
   if (req.session.role !== "admin" && folder.userId.toString() !== req.session.userId) {
     return res.status(403).json({ error: "forbidden" });
   }
-  if (typeof name === "string" && name.trim().length > 0 && name.trim() !== folder.name) {
-    folder.name = name.trim();
+  if (typeof name === "string" && name.trim().length > 0) {
+    const safeName = sanitizeFilename(name.trim());
+    if (safeName !== folder.name) {
+      folder.name = safeName;
+    }
   }
   if (typeof priority === "number") {
     folder.priority = priority;
@@ -1301,7 +1342,7 @@ apiRouter.patch("/archives/:id/rename", requireAuth, async (req, res) => {
   if (!name || typeof name !== "string") {
     return res.status(400).json({ error: "missing_name" });
   }
-  const safeName = name.replace(/[\\/]/g, "_");
+  const safeName = sanitizeFilename(name);
   const archive = await Archive.findById(req.params.id);
   if (!archive) return res.status(404).json({ error: "not_found" });
   if (req.session.role !== "admin" && archive.userId.toString() !== req.session.userId) {

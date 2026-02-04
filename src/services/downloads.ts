@@ -3,6 +3,15 @@ import path from "path";
 import type { Request, Response } from "express";
 import mime from "mime-types";
 
+function contentDisposition(filename: string) {
+  const fallback = filename
+    .split("")
+    .map((ch) => (/[a-zA-Z0-9._ -]/.test(ch) ? ch : "_"))
+    .join("");
+  const encoded = encodeURIComponent(filename).replace(/['()]/g, escape).replace(/\*/g, "%2A");
+  return `attachment; filename="${fallback}"; filename*=UTF-8''${encoded}`;
+}
+
 function parseRange(range: string, size: number) {
   const match = range.match(/bytes=(\d*)-(\d*)/);
   if (!match) return null;
@@ -41,7 +50,7 @@ export async function serveFileWithRange(
   const type = contentType || (mime.lookup(downloadName) as string) || "application/octet-stream";
 
   res.setHeader("Content-Type", type);
-  res.setHeader("Content-Disposition", `attachment; filename=\"${downloadName}\"`);
+  res.setHeader("Content-Disposition", contentDisposition(downloadName));
   res.setHeader("Accept-Ranges", "bytes");
 
   const rangeHeader = req.headers.range;
@@ -65,4 +74,27 @@ export async function serveFileWithRange(
 
 export async function ensureDir(dirPath: string) {
   await fs.promises.mkdir(dirPath, { recursive: true });
+}
+
+export async function cleanupOldDownloads(dirPath: string, ttlMs: number) {
+  const now = Date.now();
+  let entries: string[] = [];
+  try {
+    entries = await fs.promises.readdir(dirPath);
+  } catch {
+    return;
+  }
+  await Promise.all(
+    entries.map(async (entry) => {
+      const full = path.join(dirPath, entry);
+      try {
+        const stat = await fs.promises.stat(full);
+        if (now - stat.mtimeMs > ttlMs) {
+          await fs.promises.unlink(full).catch(() => undefined);
+        }
+      } catch {
+        return;
+      }
+    })
+  );
 }
