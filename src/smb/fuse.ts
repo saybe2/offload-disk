@@ -272,7 +272,11 @@ async function handleStatfs(username: string) {
   const totalBytes = user && user.quotaBytes > 0 ? user.quotaBytes : UNLIMITED_BYTES;
   const usedBytes = user ? user.usedBytes || 0 : 0;
   const freeBytes = Math.max(0, totalBytes - usedBytes);
-  const blockSize = 4096;
+  let blockSize = 4096;
+  const maxBlocks = 0x7fffffff;
+  while (Math.floor(totalBytes / blockSize) > maxBlocks) {
+    blockSize *= 2;
+  }
   return {
     bsize: blockSize,
     frsize: blockSize,
